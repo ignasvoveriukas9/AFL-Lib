@@ -8,7 +8,8 @@ dataset2class = {
     'svhn': 10,
     'agnews': 4,
     'shakespeare': 4,
-    'harbox': 5
+    'harbox': 5,
+    'padufes20': 6
 }
 
 # NOTE: if input is 'cifar10a1', then process into 'cifar10'
@@ -23,6 +24,8 @@ def name_filter(dataset_arg):
         return 'agnews'
     elif 'mnist' in dataset_arg:
         return 'mnist'
+    elif 'padufes20' in dataset_arg:
+    	return 'padufes20'
     return 'Unknown dataset'
 
 

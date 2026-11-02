@@ -16,15 +16,24 @@ class BaseClient():
     def __init__(self, id, args):
         self.id = id
         self.args = args
-        self.dataset_train = read_client_data(args.dataset, self.id, is_train=True)
-        self.dataset_test = read_client_data(args.dataset, self.id, is_train=False)
+        #self.dataset_train = read_client_data(args.dataset, self.id, is_train=True)
+        #self.dataset_test = read_client_data(args.dataset, self.id, is_train=False)
+        # Datasets are loaded only when this client is used.
+        self.dataset_train = None
+        self.dataset_test = None
+        self.loader_train = None
+        self.loader_test = None
+
+        self.train_sample_count = None
+        
         self.device = args.device
         self.server = None
 
         self.lr = args.lr
         self.batch_size = args.bs
         self.epoch = args.epoch
-        self.model = load_model(args).to(args.device)
+        #self.model = load_model(args).to(args.device)
+        self.model = load_model(args).to("cpu")
         self.loss_func = nn.CrossEntropyLoss()
         self.optim = torch.optim.SGD(params=self.model.parameters(),
                                      lr=self.lr,
@@ -33,25 +42,73 @@ class BaseClient():
         self.metric = {'loss': [], 'acc': []}
 
 
-        if self.dataset_train is not None:
+        #if self.dataset_train is not None:
+        #    self.loader_train = DataLoader(
+        #        dataset=self.dataset_train,
+        #        batch_size=self.batch_size,
+        #        shuffle=True,
+        #        collate_fn=None,
+        #        # drop_last=True
+        #    )
+        #if self.dataset_test is not None:
+        #    self.loader_test = DataLoader(
+        #        dataset=self.dataset_test,
+        #        batch_size=self.batch_size,
+        #        shuffle=False,
+        #        collate_fn=None,
+        #        # drop_last=True
+        #    )
+
+        self.training_time = None
+        
+    def load_data(self):
+        """Load this client's datasets into RAM when needed."""
+
+        if self.dataset_train is None:
+            self.dataset_train = read_client_data(
+                self.args.dataset, self.id, is_train=True
+            )
+
+            self.dataset_test = read_client_data(
+                self.args.dataset, self.id, is_train=False
+            )
+
+            self.train_sample_count = len(self.dataset_train)
+
             self.loader_train = DataLoader(
                 dataset=self.dataset_train,
                 batch_size=self.batch_size,
-                shuffle=True,
-                collate_fn=None,
-                # drop_last=True
+                shuffle=True
             )
-        if self.dataset_test is not None:
+
             self.loader_test = DataLoader(
                 dataset=self.dataset_test,
                 batch_size=self.batch_size,
-                shuffle=False,
-                collate_fn=None,
-                # drop_last=True
+                shuffle=False
             )
 
-        self.training_time = None
 
+    def unload_data(self):
+        """Release this client's datasets from RAM."""
+
+        self.dataset_train = None
+        self.dataset_test = None
+        self.loader_train = None
+        self.loader_test = None
+        
+    def move_to_device(self, device):
+        """Move model and optimizer state to the requested device."""
+        self.model.to(device)
+        # Move optimizer state (e.g. SGD momentum buffers).
+        for state in self.optim.state.values():
+            for key, value in state.items():
+                if torch.is_tensor(value):
+                    state[key] = value.to(device)
+    
+    def move_to_cpu(self):
+        """Move model and optimizer state back to CPU."""
+        self.move_to_device("cpu")
+    
     def run(self):
         raise NotImplementedError
 
@@ -171,9 +228,21 @@ class BaseServer(BaseClient):
 
     def client_update(self):
         for client in self.sampled_clients:
-            client.model.train()
-            client.reset_optimizer()
-            client.run()
+            try:
+                # Load only the active client's data.
+                client.load_data()
+                
+                #Move only the active client's model to GPU
+                client.move_to_device(client.device)
+                client.model.train()
+                client.reset_optimizer()
+                client.run()
+                
+            finally:
+                #Keep the model nd optimizer state on CPU between clients.
+                client.move_to_cpu()
+                client.unload_data()
+            	
         self.wall_clock_time += max([client.training_time for client in self.sampled_clients])
 
     def uplink(self):
@@ -184,8 +253,8 @@ class BaseServer(BaseClient):
 
     def aggregate(self):
         assert (len(self.sampled_clients) > 0)
-        total_samples = sum(len(client.dataset_train) for client in self.sampled_clients)
-        weights = [len(client.dataset_train) / total_samples for client in self.sampled_clients]
+        total_samples = sum(client.train_sample_count for client in self.sampled_clients)
+        weights = [client.train_sample_count / total_samples for client in self.sampled_clients]
 
         self.received_params = [params * weight for weight, params in zip(weights, self.received_params)]
         avg_tensor = sum(self.received_params)
@@ -194,9 +263,15 @@ class BaseServer(BaseClient):
     def test_all(self):
         self.metric['acc'] = []
         for client in self.clients:
-            client.clone_model(self)
-            client.local_test()
-            self.metric['acc'].append(client.metric['acc'])
+            try:
+                client.load_data()
+                client.clone_model(self)
+                client.move_to_device(client.device)
+                client.local_test()
+                self.metric['acc'].append(client.metric['acc'])
+            finally:
+                client.move_to_cpu()
+                client.unload_data()
 
         return {
             'acc': np.mean(self.metric['acc']),

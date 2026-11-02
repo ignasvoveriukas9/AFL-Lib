@@ -80,3 +80,13 @@ class ResNet(nn.Module):
 
 def resnet18_cifar100(args):
     return ResNet(class_num=args.class_num, block=BasicBlock, num_blocks=[2, 2, 2, 2])
+    
+def resnet18_cifar10(args):
+    return ResNet(class_num=args.class_num, block=BasicBlock, num_blocks=[2, 2, 2, 2])
+    
+def resnet18_padufes20(args):
+    return ResNet(
+        class_num=args.class_num,
+        block=BasicBlock,
+        num_blocks=[2, 2, 2, 2]
+    )

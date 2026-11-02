@@ -24,9 +24,38 @@ class CNN_CIFAR(nn.Module):
         if return_feat:
             return x, feat
         return x
+        
+class CNN_MNIST(nn.Module):
+    def __init__(self, class_num):
+        super(CNN_MNIST, self).__init__()
+
+        self.conv1 = nn.Conv2d(1, 32, 3)
+        self.conv2 = nn.Conv2d(32, 64, 3)
+        self.pool = nn.MaxPool2d(2, 2)
+
+        self.fc1 = nn.Linear(64 * 5 * 5, 128)
+        self.fc2 = nn.Linear(128, class_num)
+
+    def forward(self, x, return_feat=False):
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+
+        x = x.view(-1, 64 * 5 * 5)
+
+        feat = F.relu(self.fc1(x))
+        x = self.fc2(feat)
+
+        if return_feat:
+            return x, feat
+
+        return x
+
 
 def cnn_cifar10(args):
     return CNN_CIFAR(class_num=args.class_num)
 
 def cnn_cifar100(args):
     return CNN_CIFAR(class_num=args.class_num)
+    
+def cnn_mnist(args):
+    return CNN_MNIST(class_num=args.class_num)
